@@ -1,64 +1,152 @@
+# app.py
+
 import streamlit as st
-import pandas as pd
-import numpy as np
-st.title("🎈 My new Streamlit app! Hello")
+import requests
+from datetime import datetime
 
-st.write(
-    "This is cool! Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
+st.set_page_config(
+    page_title="News Feed",
+    page_icon="📰",
+    layout="wide"
 )
 
-@st.cache_data
-def load_data(url):
-    df = pd.read_csv(url)  # 👈 Download the data
-    return df
-def transform(df):
-    df = df.filter(items=['Lat', 'Lon'])
-    df = df.apply(np.sum, axis=0)
-    return df
-
-df = load_data("https://github.com/plotly/datasets/raw/master/uber-rides-data1.csv")
-st.dataframe(df)
-tfed = transform(df)
-st.dataframe(tfed)
-st.button("Rerun")
+NEWS_API_URL = "https://newsapi.org/v2/top-headlines"
 
 
-@st.cache_data
-def add(arr1, arr2):
-	return arr1 + arr2
+@st.cache_data(ttl=600)
+def fetch_news(api_key, country="us", category=None, query=None, page_size=20):
+    params = {
+        "apiKey": api_key,
+        "pageSize": page_size,
+    }
+
+    if query:
+        params["q"] = query
+    else:
+        params["country"] = country
+
+    if category and category != "All":
+        params["category"] = category.lower()
+
+    response = requests.get(NEWS_API_URL, params=params, timeout=10)
+    response.raise_for_status()
+
+    return response.json()
 
 
+def format_date(date_string):
+    if not date_string:
+        return "Date unavailable"
 
-# Check if 'key' already exists in session_state
-# If not, then initialize it
-if 'key' not in st.session_state:
-    st.session_state['key'] = 'value'
-
-# Session State also supports the attribute based syntax
-if 'key' not in st.session_state:
-    st.session_state.key = 'value'
+    try:
+        dt = datetime.fromisoformat(date_string.replace("Z", "+00:00"))
+        return dt.strftime("%d %b %Y, %I:%M %p")
+    except Exception:
+        return date_string
 
 
-st.title('Counter Example')
-if 'count' not in st.session_state:
-    st.session_state.count = 0
+def display_article(article):
+    source = article.get("source", {}).get("name", "Unknown source")
+    title = article.get("title") or "Untitled"
+    description = article.get("description") or "No description available."
+    url = article.get("url")
+    image_url = article.get("urlToImage")
+    published_at = format_date(article.get("publishedAt"))
+    author = article.get("author")
 
-increment = st.button('Increment')
-if increment:
-    st.session_state.count += 1
+    with st.container(border=True):
+        col1, col2 = st.columns([1, 3])
 
-st.write('Count = ', st.session_state.count)
+        with col1:
+            if image_url:
+                st.image(image_url, use_container_width=True)
+            else:
+                st.write("📰")
 
-if "celsius" not in st.session_state:
-    # set the initial default value of the slider widget
-    st.session_state.celsius = 50.0
+        with col2:
+            st.subheader(title)
+            st.caption(f"{source} • {published_at}")
 
-st.slider(
-    "Temperature in Celsius",
-    min_value=-100.0,
-    max_value=100.0,
-    key="celsius"
-)
+            if author:
+                st.caption(f"By {author}")
 
-# This will get the value of the slider widget
-st.write(st.session_state.celsius)
+            st.write(description)
+
+            if url:
+                st.link_button("Read full article", url)
+
+
+def main():
+    st.title("📰 Live News Feed")
+
+    api_key = "a3f417b116fa4104b3c547e8ee9d32e1"
+
+    if not api_key:
+        st.error("NEWS_API_KEY is missing. Add it to `.streamlit/secrets.toml`.")
+        st.stop()
+
+    with st.sidebar:
+        st.header("Filters")
+
+        country = st.selectbox(
+            "Country",
+            ["us", "in", "gb", "au", "ca"],
+            index=0
+        )
+
+        category = st.selectbox(
+            "Category",
+            [
+                "All",
+                "Business",
+                "Entertainment",
+                "General",
+                "Health",
+                "Science",
+                "Sports",
+                "Technology"
+            ]
+        )
+
+        query = st.text_input("Search query", placeholder="e.g. AI, economy, sports")
+
+        page_size = st.slider("Number of articles", 5, 50, 20)
+
+        fetch_button = st.button("Fetch News")
+
+    try:
+        data = fetch_news(
+            api_key=api_key,
+            country=country,
+            category=category,
+            query=query,
+            page_size=page_size
+        )
+
+        if data.get("status") != "ok":
+            st.error("Could not fetch news successfully.")
+            st.json(data)
+            return
+
+        articles = data.get("articles", [])
+
+        st.caption(f"Showing {len(articles)} articles")
+
+        if not articles:
+            st.warning("No articles found.")
+            return
+
+        for article in articles:
+            display_article(article)
+
+    except requests.exceptions.RequestException as e:
+        st.error("Network or API error while fetching news.")
+        st.exception(e)
+
+    except Exception as e:
+        st.error("Something went wrong.")
+        st.exception(e)
+
+
+if __name__ == "__main__":
+    main()
